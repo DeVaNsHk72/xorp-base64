@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-path-style="sub">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -174,22 +174,71 @@
         }
       }
 
-      function syncHashFromPad() {
-        var slug = (pad.value || "").trim().replace(/^\/+/, "");
-        var h = slug.length ? "#" + encodeURIComponent(slug) : "";
-        if (location.hash !== h) history.replaceState(null, "", location.pathname + location.search + h);
+      /**
+       * Path URLs (no #hash). data-path-style on <html>:
+       *  "sub" (default): /repo/ home, /repo/mypad pad — GitHub Pages project sites.
+       *  "domain": / home, /mypad pad — own domain or Pages user site at root.
+       */
+      function pathStyle() {
+        var v = (document.documentElement.getAttribute("data-path-style") || "sub").toLowerCase();
+        return v === "domain" ? "domain" : "sub";
       }
 
-      function syncPadFromHash() {
+      function decodeSeg(s) {
+        try {
+          return decodeURIComponent(s);
+        } catch (e) {
+          return s;
+        }
+      }
+
+      function splitPath() {
+        var path = location.pathname.replace(/\/index\.html$/i, "").replace(/\/+/g, "/");
+        if (path !== "/" && path.endsWith("/")) path = path.slice(0, -1);
+        var segs = path.split("/").filter(Boolean);
+        if (pathStyle() === "domain") {
+          if (segs.length === 0) return { basePath: "/", slug: "" };
+          if (segs.length === 1) return { basePath: "/", slug: decodeSeg(segs[0]) };
+          var slugD = decodeSeg(segs.pop());
+          return { basePath: "/" + segs.join("/") + "/", slug: slugD };
+        }
+        if (segs.length === 0) return { basePath: "/", slug: "" };
+        if (segs.length === 1) return { basePath: "/" + segs[0] + "/", slug: "" };
+        var slugS = decodeSeg(segs.pop());
+        return { basePath: "/" + segs.join("/") + "/", slug: slugS };
+      }
+
+      function currentUrl() {
+        var slug = (pad.value || "").trim().replace(/^\/+/, "");
+        var sp = splitPath();
+        var path = sp.basePath;
+        if (path.length > 1 && !path.endsWith("/")) path += "/";
+        if (slug.length) path += encodeURIComponent(slug);
+        return path + location.search;
+      }
+
+      function syncUrlFromPad() {
+        var next = currentUrl();
+        if (location.pathname + location.search !== next) history.replaceState(null, "", next);
+      }
+
+      function syncPadFromPath() {
+        pad.value = splitPath().slug;
+      }
+
+      function migrateHashToPathOnce() {
         var h = location.hash.replace(/^#/, "");
+        if (!h.length) return;
         try {
           h = decodeURIComponent(h);
         } catch (e) {}
+        if (splitPath().slug.length) return;
         pad.value = h;
+        history.replaceState(null, "", currentUrl());
       }
 
       pad.addEventListener("change", function () {
-        syncHashFromPad();
+        syncUrlFromPad();
         loadFromStorage();
         refreshDecode();
       });
@@ -205,8 +254,8 @@
         refreshDecode();
       });
 
-      window.addEventListener("hashchange", function () {
-        syncPadFromHash();
+      window.addEventListener("popstate", function () {
+        syncPadFromPath();
         loadFromStorage();
         refreshDecode();
       });
@@ -214,7 +263,10 @@
       brand.addEventListener("click", function (e) {
         e.preventDefault();
         pad.value = "";
-        location.hash = "";
+        var sp = splitPath();
+        var path = sp.basePath;
+        if (path.length > 1 && !path.endsWith("/")) path += "/";
+        history.replaceState(null, "", path + location.search);
         input.value = "";
         output.value = "";
         status.textContent = "";
@@ -222,7 +274,8 @@
         pad.focus();
       });
 
-      syncPadFromHash();
+      migrateHashToPathOnce();
+      syncPadFromPath();
       if (!pad.value) pad.placeholder = "yourpage";
       loadFromStorage();
       refreshDecode();
